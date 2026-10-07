@@ -50,7 +50,7 @@ _DIRECTIONS = {
     "ne": (1, 1),
     "nw": (1, -1),
     "se": (-1, 1),
-    "sw": (-1, 1),
+    "sw": (-1, -1),
 }
 
 
@@ -84,12 +84,18 @@ def _check_hash(text):
     if not MIN_PRECISION <= len(text) <= MAX_PRECISION:
         raise GeoError("geohash 长度必须在 %d..%d 之间: %r"
                        % (MIN_PRECISION, MAX_PRECISION, text))
+    for char in text:
+        if char not in _INDEX:
+            raise GeoError("geohash 含字母表外字符 %r: %r" % (char, text))
     return text
 
 
 def _char_value(char):
     """取一个字符对应的五位值。"""
-    return _INDEX.get(char, 0)
+    try:
+        return _INDEX[char]
+    except KeyError:
+        raise GeoError("geohash 含字母表外字符: %r" % (char,))
 
 
 def bit_lengths(precision):
@@ -103,7 +109,7 @@ def cell_size(precision):
     """返回该精度下格子的大小 (纬度高度, 经度宽度)。"""
     _check_precision(precision)
     lat_bits, lon_bits = bit_lengths(precision)
-    return LAT_SPAN / (1 << lat_bits), LON_SPAN / (1 << lat_bits)
+    return LAT_SPAN / (1 << lat_bits), LON_SPAN / (1 << lon_bits)
 
 
 def encode(lat, lon, precision=12):
@@ -119,7 +125,7 @@ def encode(lat, lon, precision=12):
     while len(chars) < precision:
         if take_lon:
             mid = (lon_min + lon_max) / 2.0
-            if lon > mid:
+            if lon >= mid:
                 chunk = (chunk << 1) | 1
                 lon_min = mid
             else:
@@ -127,7 +133,7 @@ def encode(lat, lon, precision=12):
                 lon_max = mid
         else:
             mid = (lat_min + lat_max) / 2.0
-            if lat > mid:
+            if lat >= mid:
                 chunk = (chunk << 1) | 1
                 lat_min = mid
             else:
@@ -173,7 +179,9 @@ def decode_exact(text):
     lat_min, lat_max, lon_min, lon_max = _bounds(text)
     lat = (lat_min + lat_max) / 2.0
     lon = (lon_min + lon_max) / 2.0
-    return lat, lon, (lat_max - lat_min), (lon_max - lon_min)
+    return (lat, lon,
+            (lat_max - lat_min) / 2.0,
+            (lon_max - lon_min) / 2.0)
 
 
 def decode(text):
@@ -194,7 +202,7 @@ def contains(text, lat, lon):
     _check_hash(text)
     _check_coords(lat, lon)
     lat_min, lat_max, lon_min, lon_max = _bounds(text)
-    return (lat_min < lat <= lat_max) and (lon_min < lon <= lon_max)
+    return (lat_min <= lat <= lat_max) and (lon_min <= lon <= lon_max)
 
 
 def _to_values(text):
@@ -244,12 +252,11 @@ def adjacent(text, direction):
     lat_value, lon_value, lat_bits, lon_bits = _to_values(text)
     dlat, dlon = _DIRECTIONS[direction]
     lat_value += dlat
-    if lat_value < 0 or lat_value > (1 << lat_bits):
+    if lat_value < 0 or lat_value >= (1 << lat_bits):
         return None
     lon_limit = 1 << lon_bits
     lon_value += dlon
-    if lon_value < 0 or lon_value >= lon_limit:
-        lon_value = min(max(lon_value, 0), lon_limit - 1)
+    lon_value %= lon_limit
     return _to_hash(lat_value, lon_value, lat_bits, lon_bits)
 
 
